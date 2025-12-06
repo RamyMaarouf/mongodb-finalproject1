@@ -1,0 +1,406 @@
+# StatefulSet for MongoDB
+    apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: mongodb
+    spec:
+      serviceName: mongodb # Associated headless service for DNS resolution
+      replicas: 1 
+      selector:
+        matchLabels:
+          app: mongodb 
+      template:
+        metadata:
+          labels:
+            app: mongodb 
+        spec:
+          nodeSelector:
+            "kubernetes.io/os": linux 
+          containers:
+            - name: mongodb
+              image: mongo:4.2 # MongoDB container image version
+              ports:
+                - containerPort: 27017 
+                  name: mongodb
+              resources: 
+                requests:
+                  cpu: 5m 
+                  memory: 75Mi 
+                limits:
+                  cpu: 25m 
+                  memory: 1024Mi 
+              env:
+                # Inject MongoDB credentials from app-secrets
+                - name: MONGO_INITDB_ROOT_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: app-secrets
+                      key: MONGODB_INITDB_ROOT_USERNAME
+                - name: MONGO_INITDB_ROOT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: app-secrets
+                      key: MONGODB_INITDB_ROOT_PASSWORD
+              livenessProbe: 
+                exec:
+                  command:
+                    - mongosh
+                    - --eval
+                    - db.runCommand('ping').ok
+                initialDelaySeconds: 5 
+                periodSeconds: 5 
+              volumeMounts:
+                - name: mongo-persistent-storage
+                  mountPath: /data/db
+          # Persistent Volume Claim for MongoDB
+          volumeClaimTemplates:
+          - metadata:
+              name: mongo-persistent-storage
+            spec:
+              accessModes: [ "ReadWriteOnce" ]
+              storageClassName: standard 
+              resources:
+                requests:
+                  storage: 5Gi 
+
+    ---
+    # Service to expose MongoDB (Headless for StatefulSet)
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: mongodb
+    spec:
+      clusterIP: None
+      ports:
+        - port: 27017 
+      selector:
+        app: mongodb 
+
+    ---
+    # Deployment for RabbitMQ
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rabbitmq
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: rabbitmq
+      template:
+        metadata:
+          labels:
+            app: rabbitmq
+        spec:
+          nodeSelector:
+            "kubernetes.io/os": linux
+          containers:
+            - name: rabbitmq
+              image: rabbitmq:3.12.1-management
+              ports:
+                - containerPort: 5672
+                - containerPort: 15672
+              env:
+                # Inject RabbitMQ credentials from app-secrets
+                - name: RABBITMQ_DEFAULT_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: app-secrets
+                      key: RABBITMQ_USER
+                - name: RABBITMQ_DEFAULT_PASS
+                  valueFrom:
+                    secretKeyRef:
+                      name: app-secrets
+                      key: RABBITMQ_PASS
+              volumeMounts:
+                # Mount the configmap content as a file
+                - name: rabbitmq-plugins
+                  mountPath: /etc/rabbitmq/enabled_plugins
+                  subPath: rabbitmq_enabled_plugins 
+          volumes:
+            - name: rabbitmq-plugins
+              configMap:
+                name: rabbitmq-enabled-plugins
+    ---
+    # Service for RabbitMQ
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: rabbitmq
+    spec:
+      ports:
+        - name: amqp
+          port: 5672
+          targetPort: 5672
+        - name: management
+          port: 15672
+          targetPort: 15672
+      selector:
+        app: rabbitmq
+
+    ---
+    # Deployment for Store-Front (Frontend)
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: store-front
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: store-front
+      template:
+        metadata:
+          labels:
+            app: store-front
+        spec:
+          nodeSelector:
+            "kubernetes.io/os": linux
+          containers:
+            - name: store-front
+              image: maar0006/store-front-FinalProject:latest # <-- **UPDATE THIS DOCKER TAG**
+              ports:
+                - containerPort: 80
+              envFrom:
+              - configMapRef:
+                  name: app-config
+
+    ---
+    # Service for Store-Front (Exposed via LoadBalancer)
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: store-front
+    spec:
+      type: LoadBalancer
+      ports:
+        - port: 80
+          targetPort: 80
+      selector:
+        app: store-front
+
+    ---
+    # Deployment for Store-Admin (Admin Frontend)
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: store-admin
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: store-admin
+      template:
+        metadata:
+          labels:
+            app: store-admin
+        spec:
+          nodeSelector:
+            "kubernetes.io/os": linux
+          containers:
+            - name: store-admin
+              image: maar0006/store-admin-FinalProject:latest # <-- **UPDATE THIS DOCKER TAG**
+              ports:
+                - containerPort: 80
+              envFrom:
+              - configMapRef:
+                  name: app-config
+
+    ---
+    # Service for Store-Admin (Exposed via LoadBalancer)
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: store-admin
+    spec:
+      type: LoadBalancer
+      ports:
+        - port: 80
+          targetPort: 80
+      selector:
+        app: store-admin
+
+    ---
+    # Deployment for Order Service (Backend API)
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: order-service
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: order-service
+      template:
+        metadata:
+          labels:
+            app: order-service
+        spec:
+          nodeSelector:
+            "kubernetes.io/os": linux
+          containers:
+            - name: order-service
+              image: maar0006/order-service-FinalProject:latest # <-- **UPDATE THIS DOCKER TAG**
+              ports:
+                - containerPort: 3000
+              envFrom:
+              - configMapRef:
+                  name: app-config
+              - secretRef:
+                  name: app-secrets # Inject MongoDB and RabbitMQ secrets
+
+    ---
+    # Service for Order Service
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: order-service
+    spec:
+      ports:
+        - port: 3000
+          targetPort: 3000
+      selector:
+        app: order-service
+
+    ---
+    # Deployment for Product Service (Backend API)
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: product-service
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: product-service
+      template:
+        metadata:
+          labels:
+            app: product-service
+        spec:
+          nodeSelector:
+            "kubernetes.io/os": linux
+          containers:
+            - name: product-service
+              image: maar0006/product-service-FinalProject:latest # <-- **UPDATE THIS DOCKER TAG**
+              ports:
+                - containerPort: 3002
+              envFrom:
+              - configMapRef:
+                  name: app-config
+              - secretRef:
+                  name: app-secrets # Inject MongoDB and RabbitMQ secrets
+
+    ---
+    # Service for Product Service
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: product-service
+    spec:
+      ports:
+        - port: 3002
+          targetPort: 3002
+      selector:
+        app: product-service
+
+    ---
+    # Deployment for Makeline Service (Worker)
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: makeline-service
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: makeline-service
+      template:
+        metadata:
+          labels:
+            app: makeline-service
+        spec:
+          nodeSelector:
+            "kubernetes.io/os": linux
+          containers:
+            - name: makeline-service
+              image: maar0006/makeline-service-FinalProject:latest # <-- **UPDATE THIS DOCKER TAG**
+              ports:
+                - containerPort: 3001
+              envFrom:
+              - configMapRef:
+                  name: app-config
+              - secretRef:
+                  name: app-secrets # Inject MongoDB and RabbitMQ secrets
+
+    ---
+    # Service for Makeline Service
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: makeline-service
+    spec:
+      ports:
+        - port: 3001
+          targetPort: 3001
+      selector:
+        app: makeline-service
+
+    ---
+    # Deployment for AI Service
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: ai-service
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: ai-service
+      template:
+        metadata:
+          labels:
+            app: ai-service
+        spec:
+          nodeSelector:
+            "kubernetes.io/os": linux
+          containers:
+            - name: ai-service
+              image: maar0006/ai-service-FinalProject:latest # <-- **UPDATE THIS DOCKER TAG**
+              ports:
+                - containerPort: 5001
+              env:
+                - name: AZURE_OPENAI_API_VERSION
+                  value: "2024-07-01-preview"
+                - name: AZURE_OPENAI_DEPLOYMENT_NAME
+                  value: "" # Placeholder: Replace with your GPT-4 deployment name
+                - name: AZURE_OPENAI_ENDPOINT
+                  value: "" # Placeholder: Replace with your Azure OpenAI endpoint
+                - name: AZURE_OPENAI_DALLE_ENDPOINT
+                  value: "" # Placeholder: Replace with your DALL-E endpoint
+                - name: AZURE_OPENAI_DALLE_DEPLOYMENT_NAME
+                  value: "" # Placeholder: Replace with your DALL-E deployment name
+                - name: OPENAI_GPT_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: openai-gpt-api-secret
+                      key: OPENAI_GPT_API_KEY
+                - name: OPENAI_DALLE_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: openai-dalle-api-secret
+                      key: OPENAI_DALLE_API_KEY
+    ---
+    # Service for AI Service
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: ai-service
+    spec:
+      type: ClusterIP
+      ports:
+        - name: http
+          port: 5001
+          targetPort: 5001
+      selector:
+        app: ai-service

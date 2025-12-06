@@ -1,0 +1,25 @@
+# --- 1. General Application Configuration ---
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: app-config
+    data:
+      # Database and Messaging Hosts (using Kubernetes Service names)
+      MONGO_HOST: "mongodb" # Matches the MongoDB Service name in aps-all-in-one
+      RABBITMQ_HOST: "rabbitmq" # Matches the RabbitMQ Service name in aps-all-in-one
+      
+      # Example Ports (used by microservices to communicate)
+      ORDER_SERVICE_URL: "http://order-service:3000"
+      MAKELINE_SERVICE_URL: "http://makeline-service:3001"
+      PRODUCT_SERVICE_URL: "http://product-service:3002"
+      AI_SERVICE_URL: "http://ai-service:5001"
+
+    ---
+    # --- 2. RabbitMQ Plugin Configuration (from your uploaded config-maps.yaml) ---
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: rabbitmq-enabled-plugins
+    data:
+      rabbitmq_enabled_plugins: |
+        [rabbitmq_management,rabbitmq_prometheus,rabbitmq_amqp1_0].
